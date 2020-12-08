@@ -7,7 +7,6 @@ Recommended to run with pypy for efficiency. See README.
 
 import argparse
 import csv
-import gzip
 import math
 import os
 import random
@@ -21,7 +20,8 @@ MAX_HALF_LIFE = 274.  # 9 months
 LN2 = math.log(2.)
 
 # data instance object
-Instance = namedtuple('Instance', 'p t fv h a lang right wrong ts uid lexeme'.split())
+Instance = namedtuple('Instance', 'p t fv h a uid lexeme'.split())
+p_map = {'1': 1, '2': 0.5, '3': 0, '4': 1}
 
 
 class SpacedRepetitionModel(object):
@@ -81,8 +81,17 @@ class SpacedRepetitionModel(object):
             return pclip(p), h
         elif self.method == 'lr':
             dp = sum([self.weights[k] * x_k for (k, x_k) in inst.fv])
-            p = 1. / (1 + math.exp(-dp))
-            return pclip(p), random.random()
+            p = pclip(1. / (1 + math.exp(-dp)))
+            h = -inst.t / math.log(p, 2)
+            return p, hclip(h)
+        elif self.method == 'anki':
+            try:
+                s = max(1.3, (2.5 - 0.15 * inst.fv[1][1])) ** inst.fv[0][1]
+            except OverflowError:
+                s = - MAX_HALF_LIFE * math.log(0.9) / LN2
+            p = pclip(math.e ** (inst.t / s * math.log(0.9)))
+            h = -inst.t / math.log(p, 2)
+            return p, hclip(h)
         else:
             raise Exception
 
@@ -91,7 +100,6 @@ class SpacedRepetitionModel(object):
             base = 2.
             p, h = self.predict(inst, base)
             dlp_dw = 2. * (p - inst.p) * (LN2 ** 2) * p * (inst.t / h)
-            # 2 * (p - p`) * (log2)^2 * p * (t/h)
             dlh_dw = 2. * (h - inst.h) * LN2 * h
             for (k, x_k) in inst.fv:
                 rate = (1. / (1 + inst.p)) * self.lrate / math.sqrt(1 + self.fcounts[k])
@@ -105,7 +113,7 @@ class SpacedRepetitionModel(object):
                 self.weights[k] -= rate * self.l2wt * self.weights[k] / self.sigma ** 2
                 # increment feature count for learning rate
                 self.fcounts[k] += 1
-        elif self.method == 'leitner' or self.method == 'pimsleur':
+        elif self.method == 'leitner' or self.method == 'pimsleur' or self.method == 'anki':
             pass
         elif self.method == 'lr':
             p, _ = self.predict(inst)
@@ -121,7 +129,7 @@ class SpacedRepetitionModel(object):
                 self.fcounts[k] += 1
 
     def train(self, trainset):
-        if self.method == 'leitner' or self.method == 'pimsleur':
+        if self.method == 'leitner' or self.method == 'pimsleur' or self.method == 'anki':
             return
         random.shuffle(trainset)
         for inst in trainset:
@@ -147,15 +155,20 @@ class SpacedRepetitionModel(object):
         mae_h = mae(results['h'], results['hh'])
         cor_p = spearmanr(results['p'], results['pp'])
         cor_h = spearmanr(results['h'], results['hh'])
+        rmse_p = rmse(results['p'], results['pp'])
+        pow_fom = pow_metric(results['p'], results['pp'])
+        log_fom = log_metric(results['p'], results['pp'])
         total_slp = sum(results['slp'])
         total_slh = sum(results['slh'])
         total_l2 = sum([x ** 2 for x in self.weights.values()])
         total_loss = total_slp + self.hlwt * total_slh + self.l2wt * total_l2
         if prefix:
             sys.stderr.write('%s\t' % prefix)
-        sys.stderr.write('%.1f (p=%.1f, h=%.1f, l2=%.1f)\tmae(p)=%.3f\tcor(p)=%.3f\tmae(h)=%.3f\tcor(h)=%.3f\n' % \
-                         (total_loss, total_slp, self.hlwt * total_slh, self.l2wt * total_l2,
-                          mae_p, cor_p, mae_h, cor_h))
+        sys.stderr.write(
+            '%.1f (p=%.1f, h=%.1f, l2=%.1f)\tmae(p)=%.3f\tcor(p)=%.3f\tmae(h)=%.3f\tcor('
+            'h)=%.3f\trmse=%.3f\tpow_fom=%.3f\tlog_fom=%.3f\n' % \
+            (total_loss, total_slp, self.hlwt * total_slh, self.l2wt * total_l2,
+             mae_p, cor_p, mae_h, cor_h, rmse_p, pow_fom, log_fom))
 
     def dump_weights(self, fname):
         with open(fname, 'w') as f:
@@ -164,10 +177,10 @@ class SpacedRepetitionModel(object):
 
     def dump_predictions(self, fname, testset):
         with open(fname, 'w') as f:
-            f.write('p\tpp\th\thh\tlang\tuser_id\ttimestamp\n')
+            f.write('p\tpp\th\thh\tuser_id\n')
             for inst in testset:
                 pp, hh = self.predict(inst)
-                f.write('%.4f\t%.4f\t%.4f\t%.4f\t%s\t%s\t%d\n' % (inst.p, pp, inst.h, hh, inst.lang, inst.uid, inst.ts))
+                f.write('%.4f\t%.4f\t%.4f\t%.4f\t%s\n' % (inst.p, pp, inst.h, hh, inst.uid))
 
     def dump_detailed_predictions(self, fname, testset):
         with open(fname, 'w') as f:
@@ -175,11 +188,11 @@ class SpacedRepetitionModel(object):
             for inst in testset:
                 pp, hh = self.predict(inst)
                 for i in range(inst.right):
-                    f.write('1.0\t%.4f\t%.4f\t%.4f\t%s\t%s\t%d\t%s\n' % (
-                        pp, inst.h, hh, inst.lang, inst.uid, inst.ts, inst.lexeme))
+                    f.write('1.0\t%.4f\t%.4f\t%.4f\t%s\t%s\n' % (
+                        pp, inst.h, hh, inst.uid, inst.lexeme))
                 for i in range(inst.wrong):
-                    f.write('0.0\t%.4f\t%.4f\t%.4f\t%s\t%s\t%d\t%s\n' % (
-                        pp, inst.h, hh, inst.lang, inst.uid, inst.ts, inst.lexeme))
+                    f.write('0.0\t%.4f\t%.4f\t%.4f\t%s\t%s\n' % (
+                        pp, inst.h, hh, inst.uid, inst.lexeme))
 
 
 def pclip(p):
@@ -216,38 +229,61 @@ def spearmanr(l1, l2):
     return num / math.sqrt(d1 * d2)
 
 
-def read_data(input_file, method, omit_bias=False, omit_lexemes=False, max_lines=None):
+def rmse(l1, l2):
+    # root mean squared error
+    return math.sqrt(mean([math.pow(abs(l1[i] - l2[i]), 2) for i in range(len(l1))]))
+
+
+def pow_metric(l1, l2):
+    # supermemo metric
+    return mean([l1[i] * math.pow(1 - l2[i], 2) + (1 - l1[i]) * math.pow(l2[i], 2) for i in range(len(l1))])
+
+
+def log_metric(l1, l2):
+    # supermemo metric
+    return mean([- l1[i] * math.log(l2[i]) - (1 - l1[i]) * math.log(1 - l2[i]) for i in range(len(l1))])
+
+
+def read_data(input_file, method, omit_bias=False, omit_lexemes=False, max_lines=None, cr=False, cl=False):
     # read learning trace data in specified format, see README for details
     sys.stderr.write('reading data...')
     instances = list()
-    if input_file.endswith('gz'):
-        f = gzip.open(input_file, 'r')
-    else:
-        f = open(input_file, 'r')
+    f = open(input_file, 'r')
     reader = csv.DictReader(f)
     for i, row in enumerate(reader):
         if max_lines is not None and i >= max_lines:
             break
-        p = pclip(float(row['p_recall']))
-        t = float(row['delta']) / (60 * 60 * 24)  # convert time delta to days
+        p = pclip(p_map[row['first_response']])
+        t = max(1, int(row['used_interval']))
         h = hclip(-t / (math.log(p, 2)))
-        lang = '%s->%s' % (row['ui_language'], row['learning_language'])
-        lexeme_id = row['lexeme_id']
-        lexeme_string = row['lexeme_string']
-        timestamp = int(row['timestamp'])
+        voc_id = row['voc_id']
         user_id = row['user_id']
-        seen = int(row['history_seen'])
-        right = int(row['history_correct'])
-        wrong = seen - right
-        right_this = int(row['session_correct'])
-        wrong_this = int(row['session_seen']) - right_this
+        acc_rep = int(row['acc_rep'])
+        acc_lapses = int(row['acc_lapses'])
+        con_rep = int(row['con_rep'])
+        con_lapses = int(row['con_lapses'])
+        total = acc_rep + acc_lapses
+
+        if cr:
+            right = con_rep
+        else:
+            right = acc_rep
+
+        if cl:
+            wrong = con_lapses
+        else:
+            wrong = acc_lapses
+
         # feature vector is a list of (feature, value) tuples
         fv = []
         # core features based on method
         if method == 'leitner':
-            fv.append((sys.intern('diff'), right - wrong))
+            fv.append((sys.intern('diff'), acc_rep - acc_lapses))
         elif method == 'pimsleur':
-            fv.append((sys.intern('total'), right + wrong))
+            fv.append((sys.intern('total'), acc_rep + acc_lapses))
+        elif method == 'anki':
+            fv.append((sys.intern('rep'), con_rep))
+            fv.append((sys.intern('lapses'), acc_lapses))
         else:
             # fv.append((intern('right'), right))
             # fv.append((intern('wrong'), wrong))
@@ -259,16 +295,15 @@ def read_data(input_file, method, omit_bias=False, omit_lexemes=False, max_lines
         if not omit_bias:
             fv.append((sys.intern('bias'), 1.))
         if not omit_lexemes:
-            fv.append((sys.intern('%s:%s' % (row['learning_language'], lexeme_string)), 1.))
+            fv.append((sys.intern('%s' % (row['voc_id'])), 1.))
         instances.append(
-            Instance(p, t, fv, h, (right + 2.) / (seen + 4.), lang, right_this, wrong_this, timestamp, user_id,
-                     lexeme_string))
+            Instance(p, t, fv, h, (right + 2.) / (total + 4.), user_id, voc_id))
         if i % 1000000 == 0:
             sys.stderr.write('%d...' % i)
-        # if i > 1000000:
-        #     break
+        if i >= 12000000:
+            break
     sys.stderr.write('done!\n')
-    splitpoint = int(0.9 * len(instances))
+    splitpoint = int(0.8 * len(instances))
     return instances[:splitpoint], instances[splitpoint:]
 
 
@@ -276,7 +311,9 @@ argparser = argparse.ArgumentParser(description='Fit a SpacedRepetitionModel to 
 argparser.add_argument('-b', action="store_true", default=False, help='omit bias feature')
 argparser.add_argument('-l', action="store_true", default=False, help='omit lexeme features')
 argparser.add_argument('-t', action="store_true", default=False, help='omit half-life term')
-argparser.add_argument('-m', action="store", dest="method", default='hlr', help="hlr, lr, leitner, pimsleur")
+argparser.add_argument('-m', action="store", dest="method", default='hlr', help="hlr, lr, leitner, pimsleur, anki")
+argparser.add_argument('-cr', action="store_true", default=False, help="continue rep")
+argparser.add_argument('-cl', action="store_true", default=False, help="continue lapses")
 argparser.add_argument('-x', action="store", dest="max_lines", type=int, default=None,
                        help="maximum number of lines to read (for dev)")
 argparser.add_argument('input_file', action="store", help='log file for training')
@@ -293,9 +330,12 @@ if __name__ == "__main__":
         sys.stderr.write('--> omit_lexemes\n')
     if args.t:
         sys.stderr.write('--> omit_h_term\n')
-
+    if args.cr:
+        sys.stderr.write('--> continue_rep\n')
+    if args.cl:
+        sys.stderr.write('--> continue_lapses\n')
     # read data set
-    trainset, testset = read_data(args.input_file, args.method, args.b, args.l, args.max_lines)
+    trainset, testset = read_data(args.input_file, args.method, args.b, args.l, args.max_lines, args.cr, args.cl)
     sys.stderr.write('|train| = %d\n' % len(trainset))
     sys.stderr.write('|test|  = %d\n' % len(testset))
 
