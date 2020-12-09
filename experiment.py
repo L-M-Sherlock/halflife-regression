@@ -149,7 +149,6 @@ class SpacedRepetitionModel(object):
         cor_p = spearmanr(results['p'], results['pp'])
         cor_h = spearmanr(results['h'], results['hh'])
         rmse_p = rmse(results['p'], results['pp'])
-        pow_p = pow_metric(results['p'], results['pp'])
         log_p = log_metric(results['p'], results['pp'])
         total_slp = sum(results['slp'])
         total_slh = sum(results['slh'])
@@ -157,9 +156,10 @@ class SpacedRepetitionModel(object):
         total_loss = total_slp + self.hlwt * total_slh + self.l2wt * total_l2
         if prefix:
             sys.stderr.write('%s\t' % prefix)
-        sys.stderr.write('%.1f (p=%.1f, h=%.1f, l2=%.1f)\tmae(p)=%.3f\tcor(p)=%.3f\tmae(h)=%.3f\tcor(h)=%.3f\trmse(p)=%.3f\tpow_FoM(p)=%.3f\tlog_FoM(p)=%.3f\n' % \
-                         (total_loss, total_slp, self.hlwt * total_slh, self.l2wt * total_l2,
-                          mae_p, cor_p, mae_h, cor_h, rmse_p, pow_p, log_p))
+        sys.stderr.write(
+            '%.1f (p=%.1f, h=%.1f, l2=%.1f)\tmae(p)=%.3f\tcor(p)=%.3f\tmae(h)=%.3f\tcor(h)=%.3f\trmse(p)=%.3f\tlog_FoM(p)=%.3f\n' % \
+            (total_loss, total_slp, self.hlwt * total_slh, self.l2wt * total_l2,
+             mae_p, cor_p, mae_h, cor_h, rmse_p, log_p))
 
     def dump_weights(self, fname):
         with open(fname, 'w') as f:
@@ -225,14 +225,9 @@ def rmse(l1, l2):
     return math.sqrt(mean([math.pow(abs(l1[i] - l2[i]), 2) for i in range(len(l1))]))
 
 
-def pow_metric(l1, l2):
-    # supermemo metric
-    return mean([l1[i] * math.pow(abs(l1[i] - l2[i]), 2) + (1 - l1[i]) * math.pow(abs(l1[i] - l2[i]), 2) for i in range(len(l1))])
-
-
 def log_metric(l1, l2):
     # supermemo metric
-    return mean([- l1[i] * math.log(1 - abs(l1[i] - l2[i])) - (1 - l1[i]) * math.log(1 -abs(l1[i] - l2[i])) for i in range(len(l1))])
+    return mean([- math.log(1 - abs(l1[i] - l2[i])) for i in range(len(l1))])
 
 
 def read_data(input_file, method, omit_bias=False, omit_lexemes=False, max_lines=None):
@@ -284,8 +279,6 @@ def read_data(input_file, method, omit_bias=False, omit_lexemes=False, max_lines
                      lexeme_string))
         if i % 1000000 == 0:
             sys.stderr.write('%d...' % i)
-        if i > 1000000:
-            break
     sys.stderr.write('done!\n')
     splitpoint = int(0.9 * len(instances))
     return instances[:splitpoint], instances[splitpoint:]
