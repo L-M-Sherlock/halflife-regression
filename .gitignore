@@ -1,2 +1,9 @@
 
 *.csv
+*.xml
+*.iml
+*.preds
+*.weights
+.RData
+.Rhistory
+*.xlsx
