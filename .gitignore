@@ -2,8 +2,7 @@
 *.csv
 *.xml
 *.iml
-*.preds
-*.weights
+results
 .RData
 .Rhistory
 *.xlsx
