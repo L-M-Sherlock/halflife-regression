@@ -21,7 +21,7 @@ LN2 = math.log(2.)
 
 # data instance object
 Instance = namedtuple('Instance', 'p t fv h a uid lexeme'.split())
-p_map = {'1': 1, '2': 0.5, '3': 0, '4': 1}
+p_map = {'1': 1, '2': 0, '3': 0, '4': 1}
 
 
 class SpacedRepetitionModel(object):
@@ -286,7 +286,8 @@ def read_data(input_file, method, omit_bias=False, omit_lexemes=False, max_lines
             fv.append((sys.intern('wrong'), math.sqrt(1 + wrong)))
         # optional flag features
         if method == 'lr':
-            fv.append((sys.intern('time'), t))
+            # fv.append((sys.intern('time'), t))
+            pass
         if not omit_bias:
             fv.append((sys.intern('bias'), 1.))
         if not omit_lexemes:
