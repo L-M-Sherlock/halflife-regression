@@ -81,8 +81,9 @@ class SpacedRepetitionModel(object):
             return pclip(p), h
         elif self.method == 'lr':
             dp = sum([self.weights[k] * x_k for (k, x_k) in inst.fv])
-            p = 1. / (1 + math.exp(-dp))
-            return pclip(p), random.random()
+            p = pclip(1. / (1 + math.exp(-dp)))
+            h = -inst.t / math.log(p, 2)
+            return p, hclip(h)
         else:
             raise Exception
 
@@ -147,15 +148,18 @@ class SpacedRepetitionModel(object):
         mae_h = mae(results['h'], results['hh'])
         cor_p = spearmanr(results['p'], results['pp'])
         cor_h = spearmanr(results['h'], results['hh'])
+        rmse_p = rmse(results['p'], results['pp'])
+        pow_p = pow_metric(results['p'], results['pp'])
+        log_p = log_metric(results['p'], results['pp'])
         total_slp = sum(results['slp'])
         total_slh = sum(results['slh'])
         total_l2 = sum([x ** 2 for x in self.weights.values()])
         total_loss = total_slp + self.hlwt * total_slh + self.l2wt * total_l2
         if prefix:
             sys.stderr.write('%s\t' % prefix)
-        sys.stderr.write('%.1f (p=%.1f, h=%.1f, l2=%.1f)\tmae(p)=%.3f\tcor(p)=%.3f\tmae(h)=%.3f\tcor(h)=%.3f\n' % \
+        sys.stderr.write('%.1f (p=%.1f, h=%.1f, l2=%.1f)\tmae(p)=%.3f\tcor(p)=%.3f\tmae(h)=%.3f\tcor(h)=%.3f\trmse(p)=%.3f\tpow_FoM(p)=%.3f\tlog_FoM(p)=%.3f\n' % \
                          (total_loss, total_slp, self.hlwt * total_slh, self.l2wt * total_l2,
-                          mae_p, cor_p, mae_h, cor_h))
+                          mae_p, cor_p, mae_h, cor_h, rmse_p, pow_p, log_p))
 
     def dump_weights(self, fname):
         with open(fname, 'w') as f:
@@ -216,6 +220,21 @@ def spearmanr(l1, l2):
     return num / math.sqrt(d1 * d2)
 
 
+def rmse(l1, l2):
+    # root mean squared error
+    return math.sqrt(mean([math.pow(abs(l1[i] - l2[i]), 2) for i in range(len(l1))]))
+
+
+def pow_metric(l1, l2):
+    # supermemo metric
+    return mean([l1[i] * math.pow(abs(l1[i] - l2[i]), 2) + (1 - l1[i]) * math.pow(abs(l1[i] - l2[i]), 2) for i in range(len(l1))])
+
+
+def log_metric(l1, l2):
+    # supermemo metric
+    return mean([- l1[i] * math.log(1 - abs(l1[i] - l2[i])) - (1 - l1[i]) * math.log(1 -abs(l1[i] - l2[i])) for i in range(len(l1))])
+
+
 def read_data(input_file, method, omit_bias=False, omit_lexemes=False, max_lines=None):
     # read learning trace data in specified format, see README for details
     sys.stderr.write('reading data...')
@@ -265,8 +284,8 @@ def read_data(input_file, method, omit_bias=False, omit_lexemes=False, max_lines
                      lexeme_string))
         if i % 1000000 == 0:
             sys.stderr.write('%d...' % i)
-        # if i > 1000000:
-        #     break
+        if i > 1000000:
+            break
     sys.stderr.write('done!\n')
     splitpoint = int(0.9 * len(instances))
     return instances[:splitpoint], instances[splitpoint:]
