@@ -1,12 +1,29 @@
 import pandas as pd
 import random
 
+pp_map = {8: 0.7, 7: 0.8}
+
+# df_list = [pd.DataFrame(
+#     {
+#         'p': [1 if random.random() <= x/100 else 0 for _ in range(10000)],
+#         # 'pp': [0.95 if x >= 8 else 0.55 for _ in range(100000)]
+#         # 'pp': [x/100 + 0.03 if random.random() <= 0.5 else x/100 - 0.03 for _ in range(10000)]
+#         'pp': [x/100 for _ in range(10000)]
+#         # 'pp': [pp_map[x] for _ in range(10000 * (10 - x))]
+#         # 'pp': [x/10 + random.random() / 20 - 0.025 for _ in range(100000)]
+#     }
+# ) for x in reversed(range(85, 95))]
+
 df_list = [pd.DataFrame(
     {
-        'p': [1 if random.random() <= x/10 else 0 for _ in range(100000)],
-        'pp': [x/10 - random.random() / 10 for _ in range(100000)]
+        'p': [1 if random.random() <= x/10 else 0 for _ in range(10000)],
+        # 'pp': [0.95 if x >= 8 else 0.55 for _ in range(100000)]
+        # 'pp': [x/100 + 0.03 if random.random() <= 0.5 else x/100 - 0.03 for _ in range(10000)]
+        # 'pp': [x/10 for _ in range(10000)]
+        'pp': [pp_map[x] for _ in range(10000)]
+        # 'pp': [x/10 + random.random() / 20 - 0.025 for _ in range(100000)]
     }
-) for x in reversed(range(5, 10))]
+) for x in reversed(range(7, 9))]
 
 df = pd.DataFrame(columns=['p', 'pp'])
 
